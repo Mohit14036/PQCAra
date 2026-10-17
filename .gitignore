@@ -35,3 +35,16 @@ pyenv_ara/
 docs/build/
 docs/source/_templates/
 apps/_*
+# RISC-V toolchain + build install trees (multi-GB, built locally, not source)
+toolchain/
+/install/
+# Redundant / superseded local copies
+kyber_kem_hardware.zip
+kyber_kem_hardware_prev/
+apps/spike_runs/
+apps/hello_world/data.S
+# PQC testbench build artifacts
+hardware/tb/pqc/*.fst
+hardware/tb/pqc/*.vcd
+hardware/tb/pqc/*.bak
+hardware/tb/pqc/*.gtkw

@@ -104,6 +104,8 @@ package ara_pkg;
   // FUs instruction queue depth.
   localparam int unsigned MfpuInsnQueueDepth = 4;
   localparam int unsigned ValuInsnQueueDepth = 4;
+  // Post-quantum-crypto VFU: same depth as the ALU it sits alongside.
+  localparam int unsigned PqcInsnQueueDepth = 4;
   localparam int unsigned VlduInsnQueueDepth = 4;
   localparam int unsigned VstuInsnQueueDepth = 4;
   localparam int unsigned VaddrgenInsnQueueDepth = 4;
@@ -171,8 +173,38 @@ package ara_pkg;
     // Load instructions
     VLE, VLSE, VLXE,
     // Store instructions
-    VSE, VSSE, VSXE
+    VSE, VSSE, VSXE,
+    // Post-quantum crypto (Kyber/ML-KEM) extension -- elementwise ops,
+    // packing 4x16-bit Zq coefficients per 64-bit ELEN element
+    VPQC_MONTMUL, VPQC_BARRETT,
+    // Post-quantum crypto -- whole-vector-register ops (cross-element
+    // state dependency, not elementwise: see ARA_INTEGRATION.md)
+    VPQC_KECCAKPERM, VPQC_CBD2,
+    // Post-quantum crypto -- whole-POLYNOMIAL op: multiplies two full
+    // 256x16-bit Kyber polynomials (Q=3329) mod (X^256+1) via the real
+    // NTT-domain pipeline (poly_ntt -> poly_basemul_montgomery ->
+    // poly_invntt_tomont), see ntt_scaling/NTT_SCALING.md. Needs BOTH
+    // operands gathered (unlike KECCAKPERM/CBD2, which gather one), so
+    // it is handled as its own case in vfu_pqc.sv's FSM.
+    VPQC_POLYMUL,
+    // ---- Lane-level ML-KEM program ops (whole-object gather/compute/scatter) ----
+    // Hash / XOF sponges (A = input bytes, zero padded to ELEN words)
+    VPQC_SHA3_512_33, VPQC_SHA3_512_64, VPQC_SHA3_256_PK,
+    VPQC_SHAKE128_XOF, VPQC_SHAKE256_PRF, VPQC_SHAKE256_RK,
+    // Polynomial-domain ops (poly = 64 ELEN words = 256 x int16)
+    VPQC_NTT, VPQC_INVNTT, VPQC_REDUCE, VPQC_TOMONT,
+    VPQC_PADD, VPQC_PSUB, VPQC_BASEMUL_ACC, VPQC_REJ,
+    // Packing / compression / FO helpers
+    VPQC_TOBYTES, VPQC_FROMBYTES, VPQC_PVCOMP, VPQC_PVDECOMP,
+    VPQC_PCOMP, VPQC_PDECOMP, VPQC_FROMMSG, VPQC_TOMSG,
+    VPQC_CTVERIFY, VPQC_CMOV
   } ara_op_e;
+
+  // PQC ops that read a second whole operand (vs1 -> PqcB) in lock-step with vs2.
+  function automatic logic pqc_uses_vs1(ara_op_e op);
+    pqc_uses_vs1 = op inside {VPQC_MONTMUL, VPQC_POLYMUL, VPQC_PADD, VPQC_PSUB,
+                              VPQC_BASEMUL_ACC, VPQC_CTVERIFY, VPQC_CMOV};
+  endfunction
 
   // Return true if op is a load operation
   function automatic logic is_load(ara_op_e op);
@@ -361,9 +393,11 @@ typedef struct packed {
   // It is important that all the VFUs that can write back to the VRF
   // are grouped towards the beginning of the enumeration. The store unit
   // cannot do so, therefore it is at the end of the enumeration.
-  localparam int unsigned NrVFUs = 7;
+  // VFU_Pqc added alongside Alu/MFpu (writes back to the VRF, so it is
+  // grouped towards the beginning per the rule above).
+  localparam int unsigned NrVFUs = 8;
   typedef enum logic [$clog2(NrVFUs)-1:0] {
-    VFU_Alu, VFU_MFpu, VFU_SlideUnit, VFU_MaskUnit, VFU_LoadUnit, VFU_StoreUnit, VFU_None
+    VFU_Alu, VFU_MFpu, VFU_Pqc, VFU_SlideUnit, VFU_MaskUnit, VFU_LoadUnit, VFU_StoreUnit, VFU_None
   } vfu_e;
 
   // Internally, each lane is treated as a processing element, between indexes
@@ -919,9 +953,10 @@ typedef struct packed {
   ////////////////////////
 
   // There are seven operand queues, serving operands to the different functional units of each lane
-  localparam int unsigned NrOperandQueues = 9;
+  // PqcA/PqcB added for the VFU_Pqc post-quantum-crypto extension.
+  localparam int unsigned NrOperandQueues = 11;
   typedef enum logic [$clog2(NrOperandQueues)-1:0] {
-    AluA, AluB, MulFPUA, MulFPUB, MulFPUC, MaskB, MaskM, StA, SlideAddrGenA
+    AluA, AluB, MulFPUA, MulFPUB, MulFPUC, MaskB, MaskM, StA, SlideAddrGenA, PqcA, PqcB
   } opqueue_e;
 
   // Each lane has eight VRF banks

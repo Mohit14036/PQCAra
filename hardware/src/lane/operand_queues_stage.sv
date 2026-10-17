@@ -52,7 +52,11 @@ module operand_queues_stage import ara_pkg::*; import rvv_pkg::*; import cf_math
     // Mask unit
     output elen_t              [1:0]                 mask_operand_o,
     output logic               [1:0]                 mask_operand_valid_o,
-    input  logic               [1:0]                 mask_operand_ready_i
+    input  logic               [1:0]                 mask_operand_ready_i,
+    // Post-quantum-crypto VFU
+    output elen_t              [1:0]                 pqc_operand_o,
+    output logic               [1:0]                 pqc_operand_valid_o,
+    input  logic               [1:0]                 pqc_operand_ready_i
   );
 
   `include "common_cells/registers.svh"
@@ -327,6 +331,74 @@ module operand_queues_stage import ara_pkg::*; import rvv_pkg::*; import cf_math
     .operand_target_fu_o      (/* Unused */                    ),
     .operand_valid_o          (mask_operand_valid_o[0]         ),
     .operand_ready_i          (mask_operand_ready_i[0]         )
+  );
+
+  //////////////////////////////
+  //  Post-quantum-crypto VFU //
+  //////////////////////////////
+  // PqcA carries vs2 (Keccak state words / CBD PRF bytes / the sole
+  // elementwise operand for BARRETT); PqcB carries vs1 (the second
+  // elementwise operand, used only by VPQC_MONTMUL). See lane_sequencer.sv
+  // and ARA_INTEGRATION.md.
+
+  operand_queue #(
+    .CmdBufDepth        (ValuInsnQueueDepth   ),
+    .DataBufDepth       (5                    ),
+    .FPUSupport         (FPUSupportNone       ),
+    .NrLanes            (NrLanes              ),
+    .VLEN               (VLEN                 ),
+    .SupportIntExt2     (1'b0                 ),
+    .SupportIntExt4     (1'b0                 ),
+    .SupportIntExt8     (1'b0                 ),
+    .SupportReduct      (1'b0                 ),
+    .SupportNtrVal      (1'b0                 ),
+    .operand_queue_cmd_t(operand_queue_cmd_t  )
+  ) i_operand_queue_pqc_a (
+    .clk_i                    (clk_i                          ),
+    .rst_ni                   (rst_ni                         ),
+    .flush_i                  (1'b0                           ),
+    .lane_id_i                (lane_id_i                      ),
+    .operand_queue_cmd_i      (operand_queue_cmd_i[PqcA]      ),
+    .operand_queue_cmd_valid_i(operand_queue_cmd_valid_i[PqcA]),
+    .cmd_pop_o                (/* Unused */                   ),
+    .operand_i                (operand_i[PqcA]                ),
+    .operand_valid_i          (operand_valid_i[PqcA]          ),
+    .operand_issued_i         (operand_issued_i[PqcA]         ),
+    .operand_queue_ready_o    (operand_queue_ready_o[PqcA]    ),
+    .operand_o                (pqc_operand_o[0]               ),
+    .operand_target_fu_o      (/* Unused */                   ),
+    .operand_valid_o          (pqc_operand_valid_o[0]         ),
+    .operand_ready_i          (pqc_operand_ready_i[0]         )
+  );
+
+  operand_queue #(
+    .CmdBufDepth        (ValuInsnQueueDepth   ),
+    .DataBufDepth       (5                    ),
+    .FPUSupport         (FPUSupportNone       ),
+    .NrLanes            (NrLanes              ),
+    .VLEN               (VLEN                 ),
+    .SupportIntExt2     (1'b0                 ),
+    .SupportIntExt4     (1'b0                 ),
+    .SupportIntExt8     (1'b0                 ),
+    .SupportReduct      (1'b0                 ),
+    .SupportNtrVal      (1'b0                 ),
+    .operand_queue_cmd_t(operand_queue_cmd_t  )
+  ) i_operand_queue_pqc_b (
+    .clk_i                    (clk_i                          ),
+    .rst_ni                   (rst_ni                         ),
+    .flush_i                  (1'b0                           ),
+    .lane_id_i                (lane_id_i                      ),
+    .operand_queue_cmd_i      (operand_queue_cmd_i[PqcB]      ),
+    .operand_queue_cmd_valid_i(operand_queue_cmd_valid_i[PqcB]),
+    .cmd_pop_o                (/* Unused */                   ),
+    .operand_i                (operand_i[PqcB]                ),
+    .operand_valid_i          (operand_valid_i[PqcB]          ),
+    .operand_issued_i         (operand_issued_i[PqcB]         ),
+    .operand_queue_ready_o    (operand_queue_ready_o[PqcB]    ),
+    .operand_o                (pqc_operand_o[1]               ),
+    .operand_target_fu_o      (/* Unused */                   ),
+    .operand_valid_o          (pqc_operand_valid_o[1]         ),
+    .operand_ready_i          (pqc_operand_ready_i[1]         )
   );
 
   // Checks

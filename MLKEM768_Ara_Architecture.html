@@ -1,0 +1,442 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>ML-KEM-768 on Ara</title>
+<meta name="description" content="Architecture and data-flow reference for the Kyber / ML-KEM-768 post-quantum hardware integrated into the Ara RISC-V vector processor.">
+<style>
+  /* Layout: single-column engineering brief; full-width diagram panels that scroll inside themselves on narrow screens. */
+  :root{
+    --bg:#f3f5f8; --surface:#ffffff; --surface-2:#ebeef2; --surface-3:#e2e6ec;
+    --fg:#171b22; --muted:#596273; --faint:#8b93a2;
+    --line:#d3d8e0; --line-strong:#b7bec9;
+    --accent:#b4651c; --accent-soft:#f3e2cf;
+    --flow:#0d6e66; --flow-soft:#d4ebe8;
+    --pass:#1a7d3c; --pass-soft:#d8efdf;
+    --font-display:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    --font-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+    --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0d1117; --surface:#151a21; --surface-2:#1c222b; --surface-3:#242b36;
+    --fg:#e7ebf1; --muted:#9099a8; --faint:#6b7483;
+    --line:#2a313c; --line-strong:#3a4350;
+    --accent:#e39450; --accent-soft:#39291a;
+    --flow:#39c9bd; --flow-soft:#13302d;
+    --pass:#56cc7e; --pass-soft:#15301f;
+    color-scheme:dark;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0d1117; --surface:#151a21; --surface-2:#1c222b; --surface-3:#242b36;
+    --fg:#e7ebf1; --muted:#9099a8; --faint:#6b7483;
+    --line:#2a313c; --line-strong:#3a4350;
+    --accent:#e39450; --accent-soft:#39291a;
+    --flow:#39c9bd; --flow-soft:#13302d;
+    --pass:#56cc7e; --pass-soft:#15301f;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--fg);font-family:var(--font-body);line-height:1.55;
+    -webkit-font-smoothing:antialiased;font-size:15px}
+  .wrap{max-width:1000px;margin:0 auto;padding-inline:20px;padding-block:0}
+  h1,h2,h3{text-wrap:balance;line-height:1.15;margin:0}
+  h2{font-size:clamp(1.3rem,3.2vw,1.75rem);font-weight:600;letter-spacing:-.01em}
+  h3{font-size:1.02rem;font-weight:600}
+  p{margin:0}
+  code,.mono{font-family:var(--font-mono)}
+  .eyebrow{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent);font-weight:500}
+
+  /* ---- header ---- */
+  header.hero{border-bottom:1px solid var(--line);background:
+    linear-gradient(180deg,var(--surface-2),transparent)}
+  .hero-inner{padding-block:40px 30px}
+  .hero h1{font-family:var(--font-display);font-size:clamp(1.9rem,6vw,3rem);
+    font-weight:650;letter-spacing:-.025em;margin-top:10px}
+  .hero .sub{color:var(--muted);font-size:1.02rem;margin-top:14px;max-width:62ch}
+  .idtags{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .idtag{font-family:var(--font-mono);font-size:.72rem;padding:4px 10px;border:1px solid var(--line-strong);
+    border-radius:999px;color:var(--muted);background:var(--surface)}
+
+  /* ---- section rhythm ---- */
+  section{padding-block:34px}
+  section+section{border-top:1px solid var(--line)}
+  .sec-head{display:flex;flex-direction:column;gap:6px;margin-bottom:22px}
+  .lead{color:var(--muted);max-width:66ch;margin-top:4px}
+
+  /* ---- result banner ---- */
+  .banner{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+    background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .stat{background:var(--surface);padding:16px 16px 14px}
+  .stat .n{font-family:var(--font-mono);font-size:1.5rem;font-weight:600;letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums}
+  .stat .n.ok{color:var(--pass)}
+  .stat .l{color:var(--muted);font-size:.8rem;margin-top:3px;line-height:1.35}
+
+  /* ---- generic node cards for diagrams ---- */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:20px;overflow-x:auto}
+  .panel-title{font-family:var(--font-mono);font-size:.74rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--faint);margin-bottom:16px}
+  .node{border:1px solid var(--line-strong);border-radius:10px;background:var(--surface);
+    padding:10px 13px;min-width:0}
+  .node .nt{font-family:var(--font-mono);font-size:.82rem;font-weight:600}
+  .node .nd{color:var(--muted);font-size:.76rem;margin-top:3px}
+  .node.soft{background:var(--surface-2)}
+  .node.pqc{border-color:var(--accent);background:var(--accent-soft)}
+  .node.pqc .nt{color:var(--accent)}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--line-strong);
+    font-size:1.1rem;line-height:1}
+  .arrow.v{padding-block:6px}
+
+  /* architecture stack */
+  .archflow{display:flex;flex-direction:column;gap:0;min-width:460px}
+  .tier{display:flex;gap:10px;flex-wrap:wrap}
+  .tier .node{flex:1}
+  .lanes{display:flex;gap:8px}
+  .lane-chip{flex:1;border:1px dashed var(--line-strong);border-radius:8px;padding:7px;
+    text-align:center;font-family:var(--font-mono);font-size:.72rem;color:var(--muted);background:var(--surface-2)}
+  .lane-chip.hot{border-style:solid;border-color:var(--accent);color:var(--accent)}
+  .lanebox{border:1.5px solid var(--accent);border-radius:12px;padding:14px;background:var(--surface);
+    position:relative}
+  .lanebox .tag{position:absolute;top:-9px;left:14px;background:var(--surface);padding:0 8px;
+    font-family:var(--font-mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+  .lane-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:7px}
+  .fu{border:1px solid var(--line-strong);border-radius:8px;padding:8px 6px;text-align:center;
+    font-family:var(--font-mono);font-size:.72rem;background:var(--surface-2);color:var(--muted)}
+  .fu.hot{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .vrf{border:1px solid var(--line-strong);border-radius:8px;padding:9px;background:var(--surface-3);
+    display:flex;gap:4px;justify-content:space-between;margin-top:9px}
+  .bank{flex:1;height:22px;border-radius:4px;background:var(--surface);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:.6rem;color:var(--faint)}
+
+  /* vfu_pqc internal: gather/compute/scatter */
+  .gcs{display:grid;grid-template-columns:1fr auto 2.2fr auto 1fr;gap:10px;align-items:stretch;min-width:620px}
+  .gcs .stage{border:1px solid var(--line-strong);border-radius:10px;padding:12px;background:var(--surface-2);
+    display:flex;flex-direction:column;gap:8px}
+  .gcs .stage.compute{background:var(--accent-soft);border-color:var(--accent)}
+  .gcs .stage h4{margin:0;font-family:var(--font-mono);font-size:.74rem;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted)}
+  .gcs .stage.compute h4{color:var(--accent)}
+  .prim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:5px}
+  .prim{font-family:var(--font-mono);font-size:.66rem;background:var(--surface);border:1px solid var(--line);
+    border-radius:5px;padding:4px 5px;color:var(--muted);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* opcode chips */
+  .ops{display:flex;flex-wrap:wrap;gap:6px}
+  .op{font-family:var(--font-mono);font-size:.72rem;padding:3px 8px;border-radius:6px;
+    background:var(--surface-2);border:1px solid var(--line);color:var(--fg)}
+  .op.two{border-color:var(--flow);color:var(--flow);background:var(--flow-soft)}
+
+  /* three-stage flow */
+  .stages{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:760px){.stages{grid-template-columns:1fr}}
+  .stage-col{border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden}
+  .stage-col header{padding:13px 15px;border-bottom:1px solid var(--line);
+    display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+  .stage-col header .nm{font-family:var(--font-display);font-weight:650;font-size:1.05rem}
+  .stage-col header .io{font-family:var(--font-mono);font-size:.66rem;color:var(--faint)}
+  .steps{padding:12px 13px;display:flex;flex-direction:column;gap:3px}
+  .step{display:grid;grid-template-columns:20px 1fr;gap:9px;padding:7px 0;border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:0}
+  .step .i{font-family:var(--font-mono);font-size:.7rem;color:var(--faint);padding-top:2px;
+    font-variant-numeric:tabular-nums}
+  .step .desc{font-size:.82rem}
+  .step .desc .k{color:var(--muted)}
+  .step .ops{margin-top:5px}
+  .op.sm{font-size:.66rem;padding:2px 6px}
+  .stage-foot{padding:9px 13px;border-top:1px solid var(--line);background:var(--surface-2);
+    font-family:var(--font-mono);font-size:.68rem;color:var(--muted);display:flex;justify-content:space-between}
+
+  .ioband{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;
+    font-family:var(--font-mono);font-size:.74rem;color:var(--muted)}
+  .pill{padding:4px 10px;border:1px solid var(--line-strong);border-radius:999px;background:var(--surface);color:var(--fg)}
+  .pill.pass{border-color:var(--pass);color:var(--pass);background:var(--pass-soft)}
+
+  /* verification layers */
+  .layers{display:flex;flex-direction:column;gap:8px}
+  .layer{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
+    border:1px solid var(--line);border-radius:10px;padding:12px 15px;background:var(--surface)}
+  .layer .lt{font-weight:600;font-size:.92rem}
+  .layer .ld{color:var(--muted);font-size:.78rem;margin-top:2px}
+  .layer .lr{font-family:var(--font-mono);font-size:.82rem;color:var(--pass);font-weight:600;
+    white-space:nowrap;font-variant-numeric:tabular-nums}
+  .layer.key{border-color:var(--accent);background:var(--accent-soft)}
+  .layer.key .lr{color:var(--accent)}
+
+  /* kat flow */
+  .katflow{display:flex;flex-direction:column;gap:0;min-width:300px}
+  .katrow{display:flex;gap:12px;align-items:stretch;flex-wrap:wrap}
+  .katrow>.node{flex:1;min-width:150px}
+  .split{display:flex;gap:10px;flex-wrap:wrap}
+  .split>div{flex:1;min-width:150px}
+
+  footer{border-top:1px solid var(--line);padding-block:26px 40px;color:var(--faint);font-size:.78rem}
+  footer .mono{color:var(--muted)}
+  a{color:var(--accent)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<header class="hero">
+  <div class="wrap hero-inner">
+    <div class="eyebrow">Ara RISC-V Vector Processor · Post-Quantum Extension</div>
+    <h1>ML-KEM-768 on Ara</h1>
+    <p class="sub">A hardware integration of Kyber / ML-KEM-768 (FIPS&nbsp;203) into Ara's vector lane: one new functional unit, 29 custom vector opcodes, and the full KeyGen → Encaps → Decaps flow executed as vector instructions on the real <code>lane.sv</code> datapath.</p>
+    <div class="idtags">
+      <span class="idtag">vfu_pqc.sv</span>
+      <span class="idtag">VFU_Pqc · idx 2 / 8</span>
+      <span class="idtag">29 VPQC ops</span>
+      <span class="idtag">26 primitive blocks</span>
+      <span class="idtag">NrLanes=2 · VLEN=65536</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ===================== RESULTS ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Verification outcome</div>
+      <h2>Verified end-to-end against the full NIST KAT set</h2>
+      <p class="lead">Every one of the 100 NIST Known-Answer-Test vectors was run through the actual Ara lane RTL, producing byte-exact public keys, secret keys, ciphertexts and shared secrets against the FIPS&nbsp;203 reference — with correct implicit rejection on tampered ciphertexts.</p>
+    </div>
+    <div class="banner">
+      <div class="stat"><div class="n ok">100 / 100</div><div class="l">NIST KAT vectors on real <code>lane.sv</code> (Verilator)</div></div>
+      <div class="stat"><div class="n ok">100 / 100</div><div class="l">NIST KAT vectors on standalone RTL (Icarus)</div></div>
+      <div class="stat"><div class="n ok">272 / 272</div><div class="l">Ara riscv-tests regression (no regressions)</div></div>
+      <div class="stat"><div class="n">350</div><div class="l">VPQC vector instructions per KAT vector</div></div>
+      <div class="stat"><div class="n">~135k</div><div class="l">PQC-unit busy cycles per full KEM round</div></div>
+    </div>
+  </section>
+
+  <!-- ===================== ARCHITECTURE ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Architecture</div>
+      <h2>Where the PQC unit lives in Ara</h2>
+      <p class="lead">A scalar instruction enters through CVA6, is expanded by Ara's dispatcher and sequencer, and is broadcast to the vector lanes. Inside each lane, the new <code>vfu_pqc</code> sits alongside the ALU and the FPU as a peer functional unit that reads from and writes back to the vector register file.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Pipeline → Lane → Functional units → VRF</div>
+      <div class="archflow">
+        <div class="tier">
+          <div class="node soft"><div class="nt">CVA6 core</div><div class="nd">scalar RISC-V, issues vector insns</div></div>
+          <div class="node soft"><div class="nt">ara_dispatcher</div><div class="nd">decodes RVV + VPQC custom ops</div></div>
+          <div class="node soft"><div class="nt">ara_sequencer</div><div class="nd">per-VFU insn queues (Pqc depth=4)</div></div>
+        </div>
+        <div class="arrow v">↓</div>
+        <div class="lanes">
+          <div class="lane-chip hot">Lane 0</div>
+          <div class="lane-chip">Lane 1</div>
+          <div class="lane-chip">…</div>
+          <div class="lane-chip">Lane N−1</div>
+        </div>
+        <div class="arrow v">↓</div>
+        <div class="lanebox">
+          <span class="tag">lane.sv</span>
+          <div class="tier" style="margin-top:4px">
+            <div class="node soft"><div class="nt">lane_sequencer</div><div class="nd">tracks the live vector insn</div></div>
+            <div class="node soft"><div class="nt">operand_requester</div><div class="nd">drives 11 operand queues → incl. PqcA, PqcB</div></div>
+          </div>
+          <div class="arrow v">↓</div>
+          <div class="lane-row">
+            <div class="fu">VALU</div>
+            <div class="fu">VMFPU</div>
+            <div class="fu hot">VFU_PQC</div>
+            <div class="fu">SLDU</div>
+            <div class="fu">MASKU</div>
+            <div class="fu">VLDU</div>
+            <div class="fu">VSTU</div>
+          </div>
+          <div class="vrf">
+            <div class="bank">b0</div><div class="bank">b1</div><div class="bank">b2</div><div class="bank">b3</div>
+            <div class="bank">b4</div><div class="bank">b5</div><div class="bank">b6</div><div class="bank">b7</div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:.66rem;color:var(--faint);text-align:center;margin-top:5px">Vector Register File — 8 banks</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ioband">
+      <span>Integration footprint:</span>
+      <span class="pill">NrVFUs 7 → 8</span>
+      <span class="pill">NrOperandQueues 9 → 11</span>
+      <span class="pill">+2 operand queues (PqcA / PqcB)</span>
+      <span class="pill">+1 writeback master</span>
+    </div>
+  </section>
+
+  <!-- ===================== VFU_PQC INTERNALS ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Inside vfu_pqc.sv</div>
+      <h2>A gather → compute → scatter engine</h2>
+      <p class="lead">Each VPQC instruction names an opcode that drives a table of word counts. The unit gathers that many 64-bit words from the VRF (one or two operands), feeds them to the selected primitive block, and scatters the result words back. All cryptographic computation happens here — the testbench only plays the scalar core and load/store unit.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Operand words in → primitive → result words out</div>
+      <div class="gcs">
+        <div class="stage">
+          <h4>Gather</h4>
+          <div class="node"><div class="nt">PqcA ← vs2</div></div>
+          <div class="node"><div class="nt">PqcB ← vs1</div><div class="nd">2-operand ops only</div></div>
+          <p style="font-size:.72rem;color:var(--muted);margin:0">n_in words, table-driven per op</p>
+        </div>
+        <div class="arrow">→</div>
+        <div class="stage compute">
+          <h4>Compute — 26 primitive blocks</h4>
+          <div class="prim-grid">
+            <div class="prim">keccak_f1600</div><div class="prim">keccak_sponge</div>
+            <div class="prim">ntt_fwd</div><div class="prim">ntt_inv</div>
+            <div class="prim">montgomery</div><div class="prim">barrett_fixed</div>
+            <div class="prim">poly_cbd_eta2</div><div class="prim">rej_uniform</div>
+            <div class="prim">basemul_mont</div><div class="prim">polyvec_acc</div>
+            <div class="prim">poly_add</div><div class="prim">poly_sub</div>
+            <div class="prim">poly_tomont</div><div class="prim">barrett_pass</div>
+            <div class="prim">tobytes</div><div class="prim">frombytes</div>
+            <div class="prim">compress</div><div class="prim">decompress</div>
+            <div class="prim">pv_compress</div><div class="prim">pv_decompress</div>
+            <div class="prim">frommsg</div><div class="prim">tomsg</div>
+            <div class="prim">ct_verify</div><div class="prim">cmov_bytes</div>
+            <div class="prim">poly_mul_top</div><div class="prim">rej_parallel</div>
+          </div>
+        </div>
+        <div class="arrow">→</div>
+        <div class="stage">
+          <h4>Scatter</h4>
+          <div class="node"><div class="nt">vd → VRF</div><div class="nd">n_out words</div></div>
+          <p style="font-size:.72rem;color:var(--muted);margin:0">bank-aware writeback across all 8 banks</p>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="margin:22px 0 10px">The 29 VPQC opcodes</h3>
+    <div class="ops">
+      <span class="op two">MONTMUL</span><span class="op">BARRETT</span><span class="op">KECCAKPERM</span><span class="op">CBD2</span><span class="op two">POLYMUL</span>
+      <span class="op">SHA3_512_33</span><span class="op">SHA3_512_64</span><span class="op">SHA3_256_PK</span>
+      <span class="op">SHAKE128_XOF</span><span class="op">SHAKE256_PRF</span><span class="op">SHAKE256_RK</span>
+      <span class="op">NTT</span><span class="op">INVNTT</span><span class="op">REDUCE</span><span class="op">TOMONT</span>
+      <span class="op two">PADD</span><span class="op two">PSUB</span><span class="op two">BASEMUL_ACC</span><span class="op">REJ</span>
+      <span class="op">TOBYTES</span><span class="op">FROMBYTES</span><span class="op">PVCOMP</span><span class="op">PVDECOMP</span>
+      <span class="op">PCOMP</span><span class="op">PDECOMP</span><span class="op">FROMMSG</span><span class="op">TOMSG</span>
+      <span class="op two">CTVERIFY</span><span class="op two">CMOV</span>
+    </div>
+    <p style="font-size:.76rem;color:var(--muted);margin-top:10px"><span class="op two" style="font-size:.66rem">teal</span> = reads a second operand (vs1 → PqcB) in lock-step with vs2.</p>
+  </section>
+
+  <!-- ===================== THREE-STAGE FLOW ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Full flow — FIPS 203</div>
+      <h2>KeyGen → Encaps → Decaps as VPQC sequences</h2>
+      <p class="lead">Each stage is a straight-line sequence of VPQC vector instructions issued to the lane. The round trip closes entirely on hardware: Encaps consumes the <code>pk</code> that KeyGen produced, and Decaps consumes the <code>sk</code> and <code>ct</code> the lane itself generated.</p>
+    </div>
+
+    <div class="stages">
+      <!-- KEYGEN -->
+      <div class="stage-col">
+        <header><span class="nm">KeyGen</span><span class="io">d‖z → pk, sk</span></header>
+        <div class="steps">
+          <div class="step"><span class="i">1</span><div class="desc"><span class="k">G(d‖3)</span> → ρ, σ<div class="ops"><span class="op sm">SHA3_512_33</span></div></div></div>
+          <div class="step"><span class="i">2</span><div class="desc">Sample matrix <b>Â</b> (3×3)<div class="ops"><span class="op sm">SHAKE128_XOF</span><span class="op sm">REJ</span></div></div></div>
+          <div class="step"><span class="i">3</span><div class="desc">Sample noise <b>s, e</b> (6 polys)<div class="ops"><span class="op sm">SHAKE256_PRF</span><span class="op sm">CBD2</span></div></div></div>
+          <div class="step"><span class="i">4</span><div class="desc">ŝ = NTT(s), ê = NTT(e)<div class="ops"><span class="op sm">NTT</span><span class="op sm">REDUCE</span></div></div></div>
+          <div class="step"><span class="i">5</span><div class="desc">t̂ = Â·ŝ + ê<div class="ops"><span class="op sm">BASEMUL_ACC</span><span class="op sm">TOMONT</span><span class="op sm">PADD</span><span class="op sm">REDUCE</span></div></div></div>
+          <div class="step"><span class="i">6</span><div class="desc">Serialize keys, append H(pk)‖z<div class="ops"><span class="op sm">TOBYTES</span><span class="op sm">SHA3_256_PK</span></div></div></div>
+        </div>
+        <div class="stage-foot"><span>pk 1184 B · sk 2400 B</span><span>~20.8k cyc</span></div>
+      </div>
+
+      <!-- ENCAPS -->
+      <div class="stage-col">
+        <header><span class="nm">Encaps</span><span class="io">pk, m → ct, ss</span></header>
+        <div class="steps">
+          <div class="step"><span class="i">1</span><div class="desc">(K, coins) = <span class="k">G(m‖H(pk))</span><div class="ops"><span class="op sm">SHA3_256_PK</span><span class="op sm">SHA3_512_64</span></div></div></div>
+          <div class="step"><span class="i">2</span><div class="desc">Unpack t̂, encode message<div class="ops"><span class="op sm">FROMBYTES</span><span class="op sm">FROMMSG</span></div></div></div>
+          <div class="step"><span class="i">3</span><div class="desc">Sample Âᵀ, r, e₁, e₂<div class="ops"><span class="op sm">SHAKE128_XOF</span><span class="op sm">REJ</span><span class="op sm">CBD2</span></div></div></div>
+          <div class="step"><span class="i">4</span><div class="desc">r̂ = NTT(r); b = Âᵀr̂, v = t̂ᵀr̂<div class="ops"><span class="op sm">NTT</span><span class="op sm">BASEMUL_ACC</span></div></div></div>
+          <div class="step"><span class="i">5</span><div class="desc">b = INTT(b)+e₁ ; v = INTT(v)+e₂+k<div class="ops"><span class="op sm">INVNTT</span><span class="op sm">PADD</span><span class="op sm">REDUCE</span></div></div></div>
+          <div class="step"><span class="i">6</span><div class="desc">Compress to ciphertext<div class="ops"><span class="op sm">PVCOMP</span><span class="op sm">PCOMP</span></div></div></div>
+        </div>
+        <div class="stage-foot"><span>ct 1088 B · ss 32 B</span><span>~22.1k cyc</span></div>
+      </div>
+
+      <!-- DECAPS -->
+      <div class="stage-col">
+        <header><span class="nm">Decaps</span><span class="io">sk, ct → ss</span></header>
+        <div class="steps">
+          <div class="step"><span class="i">1</span><div class="desc">Unpack ŝ; decompress ct<div class="ops"><span class="op sm">FROMBYTES</span><span class="op sm">PVDECOMP</span><span class="op sm">PDECOMP</span></div></div></div>
+          <div class="step"><span class="i">2</span><div class="desc">m′ = v − ŝᵀ·NTT(b)<div class="ops"><span class="op sm">NTT</span><span class="op sm">BASEMUL_ACC</span><span class="op sm">INVNTT</span><span class="op sm">PSUB</span></div></div></div>
+          <div class="step"><span class="i">3</span><div class="desc">Decode message<div class="ops"><span class="op sm">TOMSG</span></div></div></div>
+          <div class="step"><span class="i">4</span><div class="desc">Re-encrypt m′ (full IND-CPA enc)<div class="ops"><span class="op sm">SHA3_512_64</span><span class="op sm">…enc…</span></div></div></div>
+          <div class="step"><span class="i">5</span><div class="desc">Compare ct vs re-encrypted ct<div class="ops"><span class="op sm">CTVERIFY</span></div></div></div>
+          <div class="step"><span class="i">6</span><div class="desc">Select real key / reject key J(z‖ct)<div class="ops"><span class="op sm">SHAKE256_RK</span><span class="op sm">CMOV</span></div></div></div>
+        </div>
+        <div class="stage-foot"><span>ss 32 B · implicit reject</span><span>~30.6k cyc</span></div>
+      </div>
+    </div>
+
+    <div class="ioband">
+      <span>Per-vector checks:</span>
+      <span class="pill pass">pk byte-exact</span>
+      <span class="pill pass">sk byte-exact</span>
+      <span class="pill pass">ct byte-exact</span>
+      <span class="pill pass">ss round-trip</span>
+      <span class="pill pass">2× tampered-ct reject</span>
+    </div>
+  </section>
+
+  <!-- ===================== VERIFICATION LAYERS ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">Verification</div>
+      <h2>Six layers, bottom to top</h2>
+      <p class="lead">Confidence is built from the primitive blocks upward to the full chip. The 100-vector NIST KAT set is applied at two independent levels — the standalone Kyber RTL and the real Ara lane — and the full Ara regression confirms the integration introduced no regressions.</p>
+    </div>
+    <div class="layers">
+      <div class="layer"><div><div class="lt">Primitive block tests · Icarus</div><div class="ld">Individual Verilog blocks (Keccak, NTT, Montgomery, …) vs reference</div></div><div class="lr">28 / 28</div></div>
+      <div class="layer"><div><div class="lt">KEM top-level tests · Icarus</div><div class="ld">Standalone keygen / encaps / decaps / full-loop RTL</div></div><div class="lr">24 / 24</div></div>
+      <div class="layer key"><div><div class="lt">NIST KAT — standalone RTL · Icarus</div><div class="ld">100 vectors through chained kem_*_top blocks</div></div><div class="lr">100 / 100</div></div>
+      <div class="layer"><div><div class="lt">Lane op tests · Verilator</div><div class="ld">MONTMUL, BARRETT, KECCAKPERM, CBD2, POLYMUL on real lane.sv</div></div><div class="lr">PASS</div></div>
+      <div class="layer key"><div><div class="lt">NIST KAT — real lane.sv · Verilator</div><div class="ld">100 vectors, full 3-stage KEM as VPQC vector instructions</div></div><div class="lr">100 / 100</div></div>
+      <div class="layer"><div><div class="lt">Full Ara chip regression · Verilator</div><div class="ld">Baseline RVV test suite — integration causes no regressions</div></div><div class="lr">272 / 272</div></div>
+    </div>
+  </section>
+
+  <!-- ===================== KAT GENERATION FLOW ===================== -->
+  <section>
+    <div class="sec-head">
+      <div class="eyebrow">NIST KAT pipeline</div>
+      <h2>How the 100 vectors are generated and checked</h2>
+      <p class="lead">The official NIST AES-256 CTR-DRBG (SP&nbsp;800-90A, no derivation function) drives the Known-Answer-Test process. An outer DRBG seeded with bytes 0…47 produces 100 per-test seeds; each seeds an inner DRBG that yields the keying material. A trusted pure-Python reference and the Ara hardware must agree byte-for-byte.</p>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Deterministic seeding → reference ↔ hardware compare</div>
+      <div class="katflow">
+        <div class="node soft"><div class="nt">seed = bytes(0…47)</div><div class="nd">NIST standard initial entropy</div></div>
+        <div class="arrow v">↓</div>
+        <div class="node soft"><div class="nt">outer CTR-DRBG (AES-256)</div><div class="nd">→ 100 × 48-byte per-test seeds</div></div>
+        <div class="arrow v">↓</div>
+        <div class="node soft"><div class="nt">inner CTR-DRBG (per test)</div><div class="nd">→ d‖z (64 B) and m (32 B)</div></div>
+        <div class="arrow v">↓</div>
+        <div class="split">
+          <div class="node"><div class="nt">kyber-py reference</div><div class="nd">FIPS 203 · generates pk / sk / ct / ss</div></div>
+          <div class="node pqc"><div class="nt">Ara hardware</div><div class="nd">vfu_pqc.sv + lane.sv runs the same inputs</div></div>
+        </div>
+        <div class="arrow v">↓</div>
+        <div class="node" style="border-color:var(--pass);background:var(--pass-soft)">
+          <div class="nt" style="color:var(--pass)">byte-exact compare → 100 / 100 PASS</div>
+          <div class="nd">pk, sk, ct, ss all match; tampered ct → correct implicit-reject key</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Ara — pulp-platform RISC-V vector processor. Post-quantum extension: <span class="mono">vfu_pqc.sv</span> + <span class="mono">hardware/src/pqc/*.v</span>, wired through <span class="mono">ara_pkg.sv</span>, <span class="mono">ara_sequencer.sv</span>, <span class="mono">operand_requester.sv</span>, <span class="mono">vector_fus_stage.sv</span>.</p>
+    <p style="margin-top:8px">KAT generator: <span class="mono">gen_nist_kat_100.py</span> · lane testbench: <span class="mono">tb_lane_kem_program.sv</span> · reference: <span class="mono">kyber-py (ML-KEM-768)</span>.</p>
+  </footer>
+
+</div>
+
+</body></html>

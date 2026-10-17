@@ -32,6 +32,33 @@ sources:
     # Sources
     # Level 0
     - hardware/src/segment_sequencer.sv
+    # Post-quantum crypto (Kyber/ML-KEM) primitives, used by vfu_pqc.sv below
+    - hardware/src/pqc/montgomery_reduce.v
+    - hardware/src/pqc/barrett_fixed.v
+    - hardware/src/pqc/keccak_f1600.v
+    - hardware/src/pqc/keccak_sponge.v
+    - hardware/src/pqc/poly_cbd_eta2.v
+    - hardware/src/pqc/ntt_fwd.v
+    - hardware/src/pqc/ntt_inv.v
+    - hardware/src/pqc/poly_basemul_montgomery.v
+    - hardware/src/pqc/kyber_poly_mul_top.v
+    - hardware/src/pqc/poly_add.v
+    - hardware/src/pqc/poly_sub.v
+    - hardware/src/pqc/poly_barrett_pass.v
+    - hardware/src/pqc/poly_tomont.v
+    - hardware/src/pqc/polyvec_basemul_acc.v
+    - hardware/src/pqc/rej_uniform.v
+    - hardware/src/pqc/rej_uniform_parallel.v
+    - hardware/src/pqc/poly_compress.v
+    - hardware/src/pqc/poly_decompress.v
+    - hardware/src/pqc/poly_frommsg.v
+    - hardware/src/pqc/poly_tomsg.v
+    - hardware/src/pqc/polyvec_compress.v
+    - hardware/src/pqc/polyvec_decompress.v
+    - hardware/src/pqc/polyvec_frombytes.v
+    - hardware/src/pqc/polyvec_tobytes.v
+    - hardware/src/pqc/ct_verify.v
+    - hardware/src/pqc/cmov_bytes.v
     # Level 1
     - hardware/src/ctrl_registers.sv
     - hardware/src/cva6_accel_first_pass_decoder.sv
@@ -57,6 +84,7 @@ sources:
     - hardware/src/lane/operand_queues_stage.sv
     - hardware/src/lane/valu.sv
     - hardware/src/lane/vmfpu.sv
+    - hardware/src/lane/vfu_pqc.sv
     - hardware/src/lane/fixed_p_rounding.sv
     - hardware/src/vlsu/vlsu.sv
     - hardware/src/masku/masku.sv

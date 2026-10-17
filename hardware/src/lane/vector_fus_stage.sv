@@ -41,6 +41,8 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
     output logic           [NrVInsn-1:0]      alu_vinsn_done_o,
     output logic                              mfpu_ready_o,
     output logic           [NrVInsn-1:0]      mfpu_vinsn_done_o,
+    output logic                              pqc_ready_o,
+    output logic           [NrVInsn-1:0]      pqc_vinsn_done_o,
     // Interface with the lane
     output logic                              alu_red_complete_o,
     output logic                              fpu_red_complete_o,
@@ -51,6 +53,9 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
     input  elen_t          [2:0]              mfpu_operand_i,
     input  logic           [2:0]              mfpu_operand_valid_i,
     output logic           [2:0]              mfpu_operand_ready_o,
+    input  elen_t          [1:0]              pqc_operand_i,
+    input  logic           [1:0]              pqc_operand_valid_i,
+    output logic           [1:0]              pqc_operand_ready_o,
     // Interface with the vector register file
     output logic                              alu_result_req_o,
     output vid_t                              alu_result_id_o,
@@ -65,6 +70,13 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
     output elen_t                             mfpu_result_wdata_o,
     output strb_t                             mfpu_result_be_o,
     input  logic                              mfpu_result_gnt_i,
+    // Post-quantum-crypto VFU (VPQC_MONTMUL/BARRETT/KECCAKPERM/CBD2)
+    output logic                              pqc_result_req_o,
+    output vid_t                              pqc_result_id_o,
+    output vaddr_t                            pqc_result_addr_o,
+    output elen_t                             pqc_result_wdata_o,
+    output strb_t                             pqc_result_be_o,
+    input  logic                              pqc_result_gnt_i,
     // Interface with the Slide Unit
     input  elen_t                             sldu_operand_i,
     output logic                              sldu_alu_req_valid_o,
@@ -205,6 +217,43 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
     .mask_i               (mask_i                          ),
     .mask_valid_i         (mask_valid_i                    ),
     .mask_ready_o         (mfpu_mask_ready                 )
+  );
+
+  //////////////////////////////
+  //  Vector PQC (Kyber) VFU  //
+  //////////////////////////////
+  // Post-quantum-crypto functional unit (VPQC_MONTMUL/BARRETT/KECCAKPERM/
+  // CBD2). Unlike ALU/MFPU it has no Slide Unit or Mask Unit connection:
+  // VPQC_MONTMUL/BARRETT are elementwise but masking/reduction were not
+  // part of the reference module's scope (see ARA_INTEGRATION.md), and
+  // VPQC_KECCAKPERM/CBD2 are whole-vector-register gather/scatter ops
+  // that do not participate in per-element masked reductions either.
+
+  vfu_pqc #(
+    .NrLanes        (NrLanes        ),
+    .VLEN           (VLEN           ),
+    .vaddr_t        (vaddr_t        ),
+    .vfu_operation_t(vfu_operation_t)
+  ) i_vfu_pqc (
+    .clk_i                (clk_i                 ),
+    .rst_ni               (rst_ni                ),
+    .lane_id_i            (lane_id_i             ),
+    // Interface with the lane sequencer
+    .vfu_operation_i      (vfu_operation_i       ),
+    .vfu_operation_valid_i(vfu_operation_valid_i ),
+    .pqc_ready_o          (pqc_ready_o           ),
+    .pqc_vinsn_done_o     (pqc_vinsn_done_o      ),
+    // Interface with the operand queues
+    .pqc_operand_i        (pqc_operand_i         ),
+    .pqc_operand_valid_i  (pqc_operand_valid_i   ),
+    .pqc_operand_ready_o  (pqc_operand_ready_o   ),
+    // Interface with the vector register file
+    .pqc_result_req_o     (pqc_result_req_o      ),
+    .pqc_result_id_o      (pqc_result_id_o       ),
+    .pqc_result_addr_o    (pqc_result_addr_o     ),
+    .pqc_result_wdata_o   (pqc_result_wdata_o    ),
+    .pqc_result_be_o      (pqc_result_be_o       ),
+    .pqc_result_gnt_i     (pqc_result_gnt_i      )
   );
 
 endmodule : vector_fus_stage

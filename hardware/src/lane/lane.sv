@@ -60,6 +60,7 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     output `STRUCT_PORT_BITS(pe_resp_t_bits)               pe_resp_o,
     output logic                                           alu_vinsn_done_o,
     output logic                                           mfpu_vinsn_done_o,
+    output logic                                           pqc_vinsn_done_o,
     input  logic                [NrVInsn-1:0][NrVInsn-1:0] global_hazard_table_i,
     // Interface with the Store unit
     output elen_t                                          stu_operand_o,
@@ -220,6 +221,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
   logic                 [NrVInsn-1:0]         alu_vinsn_done;
   logic                                       mfpu_ready;
   logic                 [NrVInsn-1:0]         mfpu_vinsn_done;
+  logic                                       pqc_ready;
+  logic                 [NrVInsn-1:0]         pqc_vinsn_done;
   // Interface with the MaskB operand queue (VRGATHER/VCOMPRESS)
   logic                                       mask_b_cmd_pop_d, mask_b_cmd_pop_q;
   `FF(mask_b_cmd_pop_q, mask_b_cmd_pop_d, 1'b0, clk_i, rst_ni);
@@ -260,6 +263,7 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .operand_request_ready_i(operand_request_ready),
     .alu_vinsn_done_o       (alu_vinsn_done_o     ),
     .mfpu_vinsn_done_o      (mfpu_vinsn_done_o    ),
+    .pqc_vinsn_done_o       (pqc_vinsn_done_o     ),
     // Interface with the Operand Queue
     .mask_b_cmd_pop_i       (mask_b_cmd_pop_q     ),
     // Interface with the VFUs
@@ -269,6 +273,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .alu_vinsn_done_i       (alu_vinsn_done       ),
     .mfpu_ready_i           (mfpu_ready           ),
     .mfpu_vinsn_done_i      (mfpu_vinsn_done      ),
+    .pqc_ready_i            (pqc_ready            ),
+    .pqc_vinsn_done_i       (pqc_vinsn_done       ),
     // From the MASKU - for VRGATHER/VCOMPRESS
     .masku_vrgat_req_valid_i(masku_vrgat_req_valid_i ),
     .masku_vrgat_req_ready_o(masku_vrgat_req_ready_o ),
@@ -306,6 +312,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
   elen_t                                      mfpu_result_wdata;
   strb_t                                      mfpu_result_be;
   logic                                       mfpu_result_gnt;
+  // Post-quantum-crypto VFU
+  logic                                       pqc_result_req;
+  vid_t                                       pqc_result_id;
+  vaddr_t                                     pqc_result_addr;
+  elen_t                                      pqc_result_wdata;
+  strb_t                                      pqc_result_be;
+  logic                                       pqc_result_gnt;
   // To the slide unit (reductions)
   logic                                       sldu_result_gnt_opqueues;
   // Support for store exception flush
@@ -358,6 +371,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .mfpu_result_wdata_i      (mfpu_result_wdata       ),
     .mfpu_result_be_i         (mfpu_result_be          ),
     .mfpu_result_gnt_o        (mfpu_result_gnt         ),
+    // Post-quantum-crypto VFU
+    .pqc_result_req_i         (pqc_result_req          ),
+    .pqc_result_id_i          (pqc_result_id           ),
+    .pqc_result_addr_i        (pqc_result_addr         ),
+    .pqc_result_wdata_i       (pqc_result_wdata        ),
+    .pqc_result_be_i          (pqc_result_be           ),
+    .pqc_result_gnt_o         (pqc_result_gnt          ),
     // Mask Unit
     .masku_result_req_i       (masku_result_req_i      ),
     .masku_result_id_i        (masku_result_id_i       ),
@@ -424,6 +444,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
   elen_t [2:0] mfpu_operand;
   logic  [2:0] mfpu_operand_valid;
   logic  [2:0] mfpu_operand_ready;
+  // Post-quantum-crypto VFU
+  elen_t [1:0] pqc_operand;
+  logic  [1:0] pqc_operand_valid;
+  logic  [1:0] pqc_operand_ready;
 
   elen_t sldu_addrgen_operand_opqueues;
   target_fu_e sldu_addrgen_operand_target_fu;
@@ -465,6 +489,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .mfpu_operand_o                   (mfpu_operand                       ),
     .mfpu_operand_valid_o             (mfpu_operand_valid                 ),
     .mfpu_operand_ready_i             (mfpu_operand_ready                 ),
+    // Post-quantum-crypto VFU
+    .pqc_operand_o                    (pqc_operand                        ),
+    .pqc_operand_valid_o              (pqc_operand_valid                  ),
+    .pqc_operand_ready_i              (pqc_operand_ready                  ),
     // Store Unit
     .stu_operand_o                    (stu_operand_o                      ),
     .stu_operand_valid_o              (stu_operand_valid_o                ),
@@ -517,6 +545,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .alu_vinsn_done_o     (alu_vinsn_done                         ),
     .mfpu_ready_o         (mfpu_ready                             ),
     .mfpu_vinsn_done_o    (mfpu_vinsn_done                        ),
+    .pqc_ready_o          (pqc_ready                              ),
+    .pqc_vinsn_done_o     (pqc_vinsn_done                         ),
     // Interface with the SLDU/ADDRGEN arbiter
     .alu_red_complete_o   (alu_red_complete                       ),
     .fpu_red_complete_o   (fpu_red_complete                       ),
@@ -535,6 +565,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .mfpu_result_wdata_o  (mfpu_result_wdata                      ),
     .mfpu_result_be_o     (mfpu_result_be                         ),
     .mfpu_result_gnt_i    (mfpu_result_gnt                        ),
+    // Post-quantum-crypto VFU
+    .pqc_result_req_o     (pqc_result_req                         ),
+    .pqc_result_id_o      (pqc_result_id                          ),
+    .pqc_result_addr_o    (pqc_result_addr                        ),
+    .pqc_result_wdata_o   (pqc_result_wdata                       ),
+    .pqc_result_be_o      (pqc_result_be                          ),
+    .pqc_result_gnt_i     (pqc_result_gnt                         ),
     // Interface with the Slide Unit
     .sldu_alu_req_valid_o (sldu_alu_req_valid_o                   ),
     .sldu_alu_valid_i     (sldu_alu_valid                         ),
@@ -554,6 +591,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
     .mfpu_operand_i       (mfpu_operand                           ),
     .mfpu_operand_valid_i (mfpu_operand_valid                     ),
     .mfpu_operand_ready_o (mfpu_operand_ready                     ),
+    // Post-quantum-crypto VFU
+    .pqc_operand_i        (pqc_operand                            ),
+    .pqc_operand_valid_i  (pqc_operand_valid                      ),
+    .pqc_operand_ready_o  (pqc_operand_ready                      ),
     // Interface with the Mask unit
     .mask_operand_o       (mask_operand_o[2 +: NrMaskFUnits]      ),
     .mask_operand_valid_o (mask_operand_valid_o[2 +: NrMaskFUnits]),

@@ -1,0 +1,564 @@
+diff --git a/hardware/src/lane/lane.sv b/hardware/src/lane/lane.sv
+index c17d87f..35e591b 100644
+--- a/hardware/src/lane/lane.sv
++++ b/hardware/src/lane/lane.sv
+@@ -60,6 +60,7 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     output `STRUCT_PORT_BITS(pe_resp_t_bits)               pe_resp_o,
+     output logic                                           alu_vinsn_done_o,
+     output logic                                           mfpu_vinsn_done_o,
++    output logic                                           pqc_vinsn_done_o,
+     input  logic                [NrVInsn-1:0][NrVInsn-1:0] global_hazard_table_i,
+     // Interface with the Store unit
+     output elen_t                                          stu_operand_o,
+@@ -220,6 +221,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+   logic                 [NrVInsn-1:0]         alu_vinsn_done;
+   logic                                       mfpu_ready;
+   logic                 [NrVInsn-1:0]         mfpu_vinsn_done;
++  logic                                       pqc_ready;
++  logic                 [NrVInsn-1:0]         pqc_vinsn_done;
+   // Interface with the MaskB operand queue (VRGATHER/VCOMPRESS)
+   logic                                       mask_b_cmd_pop_d, mask_b_cmd_pop_q;
+   `FF(mask_b_cmd_pop_q, mask_b_cmd_pop_d, 1'b0, clk_i, rst_ni);
+@@ -260,6 +263,7 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .operand_request_ready_i(operand_request_ready),
+     .alu_vinsn_done_o       (alu_vinsn_done_o     ),
+     .mfpu_vinsn_done_o      (mfpu_vinsn_done_o    ),
++    .pqc_vinsn_done_o       (pqc_vinsn_done_o     ),
+     // Interface with the Operand Queue
+     .mask_b_cmd_pop_i       (mask_b_cmd_pop_q     ),
+     // Interface with the VFUs
+@@ -269,6 +273,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .alu_vinsn_done_i       (alu_vinsn_done       ),
+     .mfpu_ready_i           (mfpu_ready           ),
+     .mfpu_vinsn_done_i      (mfpu_vinsn_done      ),
++    .pqc_ready_i            (pqc_ready            ),
++    .pqc_vinsn_done_i       (pqc_vinsn_done       ),
+     // From the MASKU - for VRGATHER/VCOMPRESS
+     .masku_vrgat_req_valid_i(masku_vrgat_req_valid_i ),
+     .masku_vrgat_req_ready_o(masku_vrgat_req_ready_o ),
+@@ -306,6 +312,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+   elen_t                                      mfpu_result_wdata;
+   strb_t                                      mfpu_result_be;
+   logic                                       mfpu_result_gnt;
++  // Post-quantum-crypto VFU
++  logic                                       pqc_result_req;
++  vid_t                                       pqc_result_id;
++  vaddr_t                                     pqc_result_addr;
++  elen_t                                      pqc_result_wdata;
++  strb_t                                      pqc_result_be;
++  logic                                       pqc_result_gnt;
+   // To the slide unit (reductions)
+   logic                                       sldu_result_gnt_opqueues;
+   // Support for store exception flush
+@@ -358,6 +371,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .mfpu_result_wdata_i      (mfpu_result_wdata       ),
+     .mfpu_result_be_i         (mfpu_result_be          ),
+     .mfpu_result_gnt_o        (mfpu_result_gnt         ),
++    // Post-quantum-crypto VFU
++    .pqc_result_req_i         (pqc_result_req          ),
++    .pqc_result_id_i          (pqc_result_id           ),
++    .pqc_result_addr_i        (pqc_result_addr         ),
++    .pqc_result_wdata_i       (pqc_result_wdata        ),
++    .pqc_result_be_i          (pqc_result_be           ),
++    .pqc_result_gnt_o         (pqc_result_gnt          ),
+     // Mask Unit
+     .masku_result_req_i       (masku_result_req_i      ),
+     .masku_result_id_i        (masku_result_id_i       ),
+@@ -424,6 +444,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+   elen_t [2:0] mfpu_operand;
+   logic  [2:0] mfpu_operand_valid;
+   logic  [2:0] mfpu_operand_ready;
++  // Post-quantum-crypto VFU
++  elen_t [1:0] pqc_operand;
++  logic  [1:0] pqc_operand_valid;
++  logic  [1:0] pqc_operand_ready;
+ 
+   elen_t sldu_addrgen_operand_opqueues;
+   target_fu_e sldu_addrgen_operand_target_fu;
+@@ -465,6 +489,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .mfpu_operand_o                   (mfpu_operand                       ),
+     .mfpu_operand_valid_o             (mfpu_operand_valid                 ),
+     .mfpu_operand_ready_i             (mfpu_operand_ready                 ),
++    // Post-quantum-crypto VFU
++    .pqc_operand_o                    (pqc_operand                        ),
++    .pqc_operand_valid_o              (pqc_operand_valid                  ),
++    .pqc_operand_ready_i              (pqc_operand_ready                  ),
+     // Store Unit
+     .stu_operand_o                    (stu_operand_o                      ),
+     .stu_operand_valid_o              (stu_operand_valid_o                ),
+@@ -517,6 +545,8 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .alu_vinsn_done_o     (alu_vinsn_done                         ),
+     .mfpu_ready_o         (mfpu_ready                             ),
+     .mfpu_vinsn_done_o    (mfpu_vinsn_done                        ),
++    .pqc_ready_o          (pqc_ready                              ),
++    .pqc_vinsn_done_o     (pqc_vinsn_done                         ),
+     // Interface with the SLDU/ADDRGEN arbiter
+     .alu_red_complete_o   (alu_red_complete                       ),
+     .fpu_red_complete_o   (fpu_red_complete                       ),
+@@ -535,6 +565,13 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .mfpu_result_wdata_o  (mfpu_result_wdata                      ),
+     .mfpu_result_be_o     (mfpu_result_be                         ),
+     .mfpu_result_gnt_i    (mfpu_result_gnt                        ),
++    // Post-quantum-crypto VFU
++    .pqc_result_req_o     (pqc_result_req                         ),
++    .pqc_result_id_o      (pqc_result_id                          ),
++    .pqc_result_addr_o    (pqc_result_addr                        ),
++    .pqc_result_wdata_o   (pqc_result_wdata                       ),
++    .pqc_result_be_o      (pqc_result_be                          ),
++    .pqc_result_gnt_i     (pqc_result_gnt                         ),
+     // Interface with the Slide Unit
+     .sldu_alu_req_valid_o (sldu_alu_req_valid_o                   ),
+     .sldu_alu_valid_i     (sldu_alu_valid                         ),
+@@ -554,6 +591,10 @@ module lane import ara_pkg::*; import rvv_pkg::*; #(
+     .mfpu_operand_i       (mfpu_operand                           ),
+     .mfpu_operand_valid_i (mfpu_operand_valid                     ),
+     .mfpu_operand_ready_o (mfpu_operand_ready                     ),
++    // Post-quantum-crypto VFU
++    .pqc_operand_i        (pqc_operand                            ),
++    .pqc_operand_valid_i  (pqc_operand_valid                      ),
++    .pqc_operand_ready_o  (pqc_operand_ready                      ),
+     // Interface with the Mask unit
+     .mask_operand_o       (mask_operand_o[2 +: NrMaskFUnits]      ),
+     .mask_operand_valid_o (mask_operand_valid_o[2 +: NrMaskFUnits]),
+diff --git a/hardware/src/lane/lane_sequencer.sv b/hardware/src/lane/lane_sequencer.sv
+index a9fa44e..7311d31 100644
+--- a/hardware/src/lane/lane_sequencer.sv
++++ b/hardware/src/lane/lane_sequencer.sv
+@@ -34,6 +34,7 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+     input  logic                 [NrOperandQueues-1:0]    operand_request_ready_i,
+     output logic                                          alu_vinsn_done_o,
+     output logic                                          mfpu_vinsn_done_o,
++    output logic                                          pqc_vinsn_done_o,
+     // Interface with the Operand Queue (MaskB - for VRGATHER)
+     input  logic                                          mask_b_cmd_pop_i,
+     // Interface with the lane's VFUs
+@@ -43,6 +44,8 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+     input  logic                 [NrVInsn-1:0]            alu_vinsn_done_i,
+     input  logic                                          mfpu_ready_i,
+     input  logic                 [NrVInsn-1:0]            mfpu_vinsn_done_i,
++    input  logic                                          pqc_ready_i,
++    input  logic                 [NrVInsn-1:0]            pqc_vinsn_done_i,
+     // Masku interface for vrgather/vcompress
+     input  logic                                          masku_vrgat_req_valid_i,
+     output logic                                          masku_vrgat_req_ready_o,
+@@ -249,15 +252,17 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+   logic           vfu_operation_valid_d;
+ 
+   // Cut the path
+-  logic alu_vinsn_done_d, mfpu_vinsn_done_d;
++  logic alu_vinsn_done_d, mfpu_vinsn_done_d, pqc_vinsn_done_d;
+ 
+   // Returns true if the corresponding lane VFU is ready.
+-  function automatic logic vfu_ready(vfu_e vfu, logic alu_ready_i, logic mfpu_ready_i);
++  function automatic logic vfu_ready(vfu_e vfu, logic alu_ready_i, logic mfpu_ready_i,
++      logic pqc_ready_i);
+     vfu_ready = 1'b1;
+     unique case (vfu)
+       VFU_Alu,
+       VFU_MaskUnit: vfu_ready = alu_ready_i;
+       VFU_MFpu    : vfu_ready = mfpu_ready_i;
++      VFU_Pqc     : vfu_ready = pqc_ready_i;
+       default:;
+     endcase
+   endfunction : vfu_ready
+@@ -270,9 +275,10 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+     pe_req_ready = 1'b1;
+ 
+     // Loops that finished execution
+-    vinsn_done_d         = alu_vinsn_done_i | mfpu_vinsn_done_i;
++    vinsn_done_d         = alu_vinsn_done_i | mfpu_vinsn_done_i | pqc_vinsn_done_i;
+     alu_vinsn_done_d     = |alu_vinsn_done_i;
+     mfpu_vinsn_done_d    = |mfpu_vinsn_done_i;
++    pqc_vinsn_done_d     = |pqc_vinsn_done_i;
+     pe_resp_o.vinsn_done = vinsn_done_q;
+ 
+     // Make no requests to the operand requester
+@@ -297,6 +303,10 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+             operand_request_valid_o[MulFPUC] ||
+             operand_request_valid_o[MaskM]);
+         end
++        VFU_Pqc : begin
++          pe_req_ready = !(operand_request_valid_o[PqcA] ||
++            operand_request_valid_o[PqcB]);
++        end
+         VFU_LoadUnit : pe_req_ready = !(operand_request_valid_o[MaskM] ||
+             (pe_req.op == VLXE && operand_request_valid_o[SlideAddrGenA]));
+         VFU_SlideUnit: pe_req_ready = !(operand_request_valid_o[SlideAddrGenA]);
+@@ -525,6 +535,45 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+             operand_request[MaskM].vl += 1;
+           operand_request_push[MaskM] = !pe_req.vm;
+         end
++        VFU_Pqc: begin
++          // VPQC_MONTMUL/BARRETT/KECCAKPERM/CBD2/POLYMUL all read vs2 into
++          // PqcA; VPQC_MONTMUL (the second multiplicand) and VPQC_POLYMUL
++          // (the second full polynomial operand) also read vs1 into PqcB.
++          // No mask or reduction support (see ARA_INTEGRATION.md).
++          operand_request[PqcA] = '{
++            id         : pe_req.id,
++            vs         : pe_req.vs2,
++            eew        : pe_req.eew_vs2,
++            conv       : pe_req.conversion_vs2,
++            scale_vl   : pe_req.scale_vl,
++            cvt_resize : pe_req.cvt_resize,
++            vtype      : pe_req.vtype,
++            vl         : vfu_operation_d.vl,
++            vstart     : vfu_operation_d.vstart,
++            hazard     : pe_req.hazard_vs2 | pe_req.hazard_vd,
++            is_reduct  : 1'b0,
++            target_fu  : ALU_SLDU,
++            default    : '0
++          };
++          operand_request_push[PqcA] = pe_req.use_vs2;
++
++          operand_request[PqcB] = '{
++            id         : pe_req.id,
++            vs         : pe_req.vs1,
++            eew        : pe_req.eew_vs1,
++            conv       : pe_req.conversion_vs1,
++            scale_vl   : pe_req.scale_vl,
++            cvt_resize : pe_req.cvt_resize,
++            vtype      : pe_req.vtype,
++            vl         : vfu_operation_d.vl,
++            vstart     : vfu_operation_d.vstart,
++            hazard     : pe_req.hazard_vs1 | pe_req.hazard_vd,
++            is_reduct  : 1'b0,
++            target_fu  : ALU_SLDU,
++            default    : '0
++          };
++          operand_request_push[PqcB] = pe_req.use_vs1 && pqc_uses_vs1(pe_req.op);
++        end
+         VFU_LoadUnit : begin
+           // This vector instruction uses masks
+           operand_request[MaskM] = '{
+@@ -962,6 +1011,7 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+ 
+       alu_vinsn_done_o  <= 1'b0;
+       mfpu_vinsn_done_o <= 1'b0;
++      pqc_vinsn_done_o  <= 1'b0;
+ 
+       vrgat_state_q       <= IDLE;
+       vrgat_cmd_req_cnt_q <= '0;
+@@ -974,6 +1024,7 @@ module lane_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::
+ 
+       alu_vinsn_done_o  <= alu_vinsn_done_d;
+       mfpu_vinsn_done_o <= mfpu_vinsn_done_d;
++      pqc_vinsn_done_o  <= pqc_vinsn_done_d;
+ 
+       vrgat_state_q       <= vrgat_state_d;
+       vrgat_cmd_req_cnt_q <= vrgat_cmd_req_cnt_d;
+diff --git a/hardware/src/lane/operand_queues_stage.sv b/hardware/src/lane/operand_queues_stage.sv
+index a0b750f..7b2c25f 100644
+--- a/hardware/src/lane/operand_queues_stage.sv
++++ b/hardware/src/lane/operand_queues_stage.sv
+@@ -52,7 +52,11 @@ module operand_queues_stage import ara_pkg::*; import rvv_pkg::*; import cf_math
+     // Mask unit
+     output elen_t              [1:0]                 mask_operand_o,
+     output logic               [1:0]                 mask_operand_valid_o,
+-    input  logic               [1:0]                 mask_operand_ready_i
++    input  logic               [1:0]                 mask_operand_ready_i,
++    // Post-quantum-crypto VFU
++    output elen_t              [1:0]                 pqc_operand_o,
++    output logic               [1:0]                 pqc_operand_valid_o,
++    input  logic               [1:0]                 pqc_operand_ready_i
+   );
+ 
+   `include "common_cells/registers.svh"
+@@ -329,6 +333,74 @@ module operand_queues_stage import ara_pkg::*; import rvv_pkg::*; import cf_math
+     .operand_ready_i          (mask_operand_ready_i[0]         )
+   );
+ 
++  //////////////////////////////
++  //  Post-quantum-crypto VFU //
++  //////////////////////////////
++  // PqcA carries vs2 (Keccak state words / CBD PRF bytes / the sole
++  // elementwise operand for BARRETT); PqcB carries vs1 (the second
++  // elementwise operand, used only by VPQC_MONTMUL). See lane_sequencer.sv
++  // and ARA_INTEGRATION.md.
++
++  operand_queue #(
++    .CmdBufDepth        (ValuInsnQueueDepth   ),
++    .DataBufDepth       (5                    ),
++    .FPUSupport         (FPUSupportNone       ),
++    .NrLanes            (NrLanes              ),
++    .VLEN               (VLEN                 ),
++    .SupportIntExt2     (1'b0                 ),
++    .SupportIntExt4     (1'b0                 ),
++    .SupportIntExt8     (1'b0                 ),
++    .SupportReduct      (1'b0                 ),
++    .SupportNtrVal      (1'b0                 ),
++    .operand_queue_cmd_t(operand_queue_cmd_t  )
++  ) i_operand_queue_pqc_a (
++    .clk_i                    (clk_i                          ),
++    .rst_ni                   (rst_ni                         ),
++    .flush_i                  (1'b0                           ),
++    .lane_id_i                (lane_id_i                      ),
++    .operand_queue_cmd_i      (operand_queue_cmd_i[PqcA]      ),
++    .operand_queue_cmd_valid_i(operand_queue_cmd_valid_i[PqcA]),
++    .cmd_pop_o                (/* Unused */                   ),
++    .operand_i                (operand_i[PqcA]                ),
++    .operand_valid_i          (operand_valid_i[PqcA]          ),
++    .operand_issued_i         (operand_issued_i[PqcA]         ),
++    .operand_queue_ready_o    (operand_queue_ready_o[PqcA]    ),
++    .operand_o                (pqc_operand_o[0]               ),
++    .operand_target_fu_o      (/* Unused */                   ),
++    .operand_valid_o          (pqc_operand_valid_o[0]         ),
++    .operand_ready_i          (pqc_operand_ready_i[0]         )
++  );
++
++  operand_queue #(
++    .CmdBufDepth        (ValuInsnQueueDepth   ),
++    .DataBufDepth       (5                    ),
++    .FPUSupport         (FPUSupportNone       ),
++    .NrLanes            (NrLanes              ),
++    .VLEN               (VLEN                 ),
++    .SupportIntExt2     (1'b0                 ),
++    .SupportIntExt4     (1'b0                 ),
++    .SupportIntExt8     (1'b0                 ),
++    .SupportReduct      (1'b0                 ),
++    .SupportNtrVal      (1'b0                 ),
++    .operand_queue_cmd_t(operand_queue_cmd_t  )
++  ) i_operand_queue_pqc_b (
++    .clk_i                    (clk_i                          ),
++    .rst_ni                   (rst_ni                         ),
++    .flush_i                  (1'b0                           ),
++    .lane_id_i                (lane_id_i                      ),
++    .operand_queue_cmd_i      (operand_queue_cmd_i[PqcB]      ),
++    .operand_queue_cmd_valid_i(operand_queue_cmd_valid_i[PqcB]),
++    .cmd_pop_o                (/* Unused */                   ),
++    .operand_i                (operand_i[PqcB]                ),
++    .operand_valid_i          (operand_valid_i[PqcB]          ),
++    .operand_issued_i         (operand_issued_i[PqcB]         ),
++    .operand_queue_ready_o    (operand_queue_ready_o[PqcB]    ),
++    .operand_o                (pqc_operand_o[1]               ),
++    .operand_target_fu_o      (/* Unused */                   ),
++    .operand_valid_o          (pqc_operand_valid_o[1]         ),
++    .operand_ready_i          (pqc_operand_ready_i[1]         )
++  );
++
+   // Checks
+   if (VrgatherOpQueueBufDepth % 2 != 0) $fatal(1, "Parameter VrgatherOpQueueBufDepth must be power of 2.");
+ 
+diff --git a/hardware/src/lane/operand_requester.sv b/hardware/src/lane/operand_requester.sv
+index a87cd15..ee2fc52 100644
+--- a/hardware/src/lane/operand_requester.sv
++++ b/hardware/src/lane/operand_requester.sv
+@@ -65,6 +65,13 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+     input  strb_t                                      masku_result_be_i,
+     output logic                                       masku_result_gnt_o,
+     output logic                                       masku_result_final_gnt_o,
++    // Post-quantum-crypto VFU
++    input  logic                                       pqc_result_req_i,
++    input  vid_t                                       pqc_result_id_i,
++    input  vaddr_t                                     pqc_result_addr_i,
++    input  elen_t                                      pqc_result_wdata_i,
++    input  strb_t                                      pqc_result_be_i,
++    output logic                                       pqc_result_gnt_o,
+     // Slide unit
+     input  logic                                       sldu_result_req_i,
+     input  vid_t                                       sldu_result_id_i,
+@@ -192,6 +199,7 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+     vinsn_result_written_d[masku_result_id] |= masku_result_gnt;
+     vinsn_result_written_d[ldu_result_id] |= ldu_result_gnt;
+     vinsn_result_written_d[sldu_result_id] |= sldu_result_gnt;
++    vinsn_result_written_d[pqc_result_id_i] |= pqc_result_gnt_o;
+   end
+ 
+   always_ff @(posedge clk_i or negedge rst_ni) begin: p_vinsn_result_written_ff
+@@ -217,8 +225,9 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+ 
+   // A set bit indicates that the the master q is requesting access to the bank b
+   // Masters 0 to NrOperandQueues-1 correspond to the operand queues.
+-  // The remaining four masters correspond to the ALU, the MFPU, the MASKU, the VLDU, and the SLDU.
+-  localparam NrGlobalMasters = 5;
++  // The remaining masters correspond to the ALU, the MFPU, the MASKU, the VLDU, the SLDU, and
++  // the PQC VFU.
++  localparam NrGlobalMasters = 6;
+   localparam NrMasters = NrOperandQueues + NrGlobalMasters;
+ 
+   typedef struct packed {
+@@ -501,6 +510,31 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+       ext_operand_req[bank][VFU_MaskUnit]  = 1'b0;
+       ext_operand_req[bank][VFU_SlideUnit] = 1'b0;
+       ext_operand_req[bank][VFU_LoadUnit]  = 1'b0;
++      // VFU_Pqc was missing from this default-clear loop (a real bug in
++      // this session's own ara_pqc_lane_wiring.patch, not something that
++      // predates the PQC integration). Every other VFU's result-write
++      // request bit is cleared here every cycle before being freshly set
++      // below for whichever bank pqc_result_addr_i/etc. currently target;
++      // VFU_Pqc's bit was only ever SET (below) and never cleared, so in
++      // simulation (and as a real inferred-latch bug in synthesis) it
++      // stayed asserted for every bank it had EVER targeted, accumulating
++      // across cycles instead of reflecting only the current cycle's
++      // request. This was invisible for VPQC_MONTMUL/BARRETT (a single
++      // one-word result write per instruction, so only one bank bit ever
++      // needed to be correct at a time) and was only caught by driving a
++      // real multi-word SCATTER (VPQC_KECCAKPERM/CBD2/POLYMUL, 25-64
++      // consecutive per-cycle result writes cycling through all 8 banks)
++      // through the real, wired-in lane.sv -- the growing, never-clearing
++      // ext_operand_req[bank][VFU_Pqc] bits caused every previously-
++      // targeted bank's write-enable to stay asserted on every later
++      // cycle too, so those banks kept getting overwritten with
++      // whatever word was currently in flight, corrupting all but the
++      // last few scattered words. Neither Verilator --lint-only
++      // elaboration nor any standalone-vfu_pqc.sv Icarus test could catch
++      // this: it is a bug in operand_requester.sv itself, several files
++      // away from vfu_pqc.sv, that only a real multi-word write burst
++      // through the actual wired-in arbiter exposes.
++      ext_operand_req[bank][VFU_Pqc]       = 1'b0;
+     end
+ 
+     // Generate the payloads for write back operations
+@@ -544,6 +578,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+       opqueue: AluA,
+       default: '0
+     };
++    operand_payload[NrOperandQueues + VFU_Pqc] = '{
++      addr   : pqc_result_addr_i >> $clog2(NrBanks),
++      wen    : 1'b1,
++      wdata  : pqc_result_wdata_i,
++      be     : pqc_result_be_i,
++      opqueue: AluA,
++      default: '0
++    };
+ 
+     // Store their request value
+     ext_operand_req[alu_result_addr_i[idx_width(NrBanks)-1:0]][VFU_Alu] =
+@@ -556,6 +598,8 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+     sldu_result_req;
+     ext_operand_req[ldu_result_addr[idx_width(NrBanks)-1:0]][VFU_LoadUnit] =
+     ldu_result_req;
++    ext_operand_req[pqc_result_addr_i[idx_width(NrBanks)-1:0]][VFU_Pqc] =
++    pqc_result_req_i;
+ 
+     // Generate the grant signals
+     alu_result_gnt_o  = 1'b0;
+@@ -563,12 +607,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+     masku_result_gnt  = 1'b0;
+     sldu_result_gnt   = 1'b0;
+     ldu_result_gnt    = 1'b0;
++    pqc_result_gnt_o  = 1'b0;
+     for (int bank = 0; bank < NrBanks; bank++) begin
+       alu_result_gnt_o  = alu_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_Alu];
+       mfpu_result_gnt_o = mfpu_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_MFpu];
+       masku_result_gnt  = masku_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_MaskUnit];
+       sldu_result_gnt   = sldu_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_SlideUnit];
+       ldu_result_gnt    = ldu_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_LoadUnit];
++      pqc_result_gnt_o  = pqc_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_Pqc];
+     end
+   end
+ 
+@@ -600,11 +646,16 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+     );
+ 
+     // Low-priority requests
++    // The PQC VFU's PqcA/PqcB opqueues and its VRF result-write port are not contiguous
++    // with the other low-priority ranges in the opqueue_e/vfu_e enums (they were appended
++    // at the end of each enum, see ARA_INTEGRATION.md), so they are concatenated as two
++    // extra low-priority arbiter inputs rather than folded into the existing bit-slices.
+     payload_t payload_lp;
+     logic payload_lp_req;
+     logic payload_lp_gnt;
+     rr_arb_tree #(
+-      .NumIn(unsigned'(SlideAddrGenA)- unsigned'(MaskB) + 1 + unsigned'(VFU_LoadUnit) - unsigned'(VFU_SlideUnit) + 1),
++      .NumIn(unsigned'(SlideAddrGenA)- unsigned'(MaskB) + 1 + unsigned'(VFU_LoadUnit) - unsigned'(VFU_SlideUnit) + 1
++             + unsigned'(PqcB) - unsigned'(PqcA) + 1 + 1),
+       .DataWidth($bits(payload_t)                                                               ),
+       .AxiVldRdy(1'b0                                                                           )
+     ) i_lp_vrf_arbiter (
+@@ -613,11 +664,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
+       .flush_i(1'b0  ),
+       .rr_i   ('0    ),
+       .data_i ({operand_payload[SlideAddrGenA:MaskB],
+-          operand_payload[NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit]} ),
++          operand_payload[NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit],
++          operand_payload[PqcB:PqcA], operand_payload[NrOperandQueues + VFU_Pqc]} ),
+       .req_i ({lane_operand_req[bank][SlideAddrGenA:MaskB],
+-          ext_operand_req[bank][VFU_LoadUnit:VFU_SlideUnit]}),
++          ext_operand_req[bank][VFU_LoadUnit:VFU_SlideUnit],
++          lane_operand_req[bank][PqcB:PqcA], ext_operand_req[bank][VFU_Pqc]}),
+       .gnt_o ({operand_gnt[bank][SlideAddrGenA:MaskB],
+-          operand_gnt[bank][NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit]}),
++          operand_gnt[bank][NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit],
++          operand_gnt[bank][PqcB:PqcA], operand_gnt[bank][NrOperandQueues + VFU_Pqc]}),
+       .data_o (payload_lp    ),
+       .idx_o  (/* Unused */  ),
+       .req_o  (payload_lp_req),
+diff --git a/hardware/src/lane/vector_fus_stage.sv b/hardware/src/lane/vector_fus_stage.sv
+index df73e92..d6c1305 100644
+--- a/hardware/src/lane/vector_fus_stage.sv
++++ b/hardware/src/lane/vector_fus_stage.sv
+@@ -41,6 +41,8 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
+     output logic           [NrVInsn-1:0]      alu_vinsn_done_o,
+     output logic                              mfpu_ready_o,
+     output logic           [NrVInsn-1:0]      mfpu_vinsn_done_o,
++    output logic                              pqc_ready_o,
++    output logic           [NrVInsn-1:0]      pqc_vinsn_done_o,
+     // Interface with the lane
+     output logic                              alu_red_complete_o,
+     output logic                              fpu_red_complete_o,
+@@ -51,6 +53,9 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
+     input  elen_t          [2:0]              mfpu_operand_i,
+     input  logic           [2:0]              mfpu_operand_valid_i,
+     output logic           [2:0]              mfpu_operand_ready_o,
++    input  elen_t          [1:0]              pqc_operand_i,
++    input  logic           [1:0]              pqc_operand_valid_i,
++    output logic           [1:0]              pqc_operand_ready_o,
+     // Interface with the vector register file
+     output logic                              alu_result_req_o,
+     output vid_t                              alu_result_id_o,
+@@ -65,6 +70,13 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
+     output elen_t                             mfpu_result_wdata_o,
+     output strb_t                             mfpu_result_be_o,
+     input  logic                              mfpu_result_gnt_i,
++    // Post-quantum-crypto VFU (VPQC_MONTMUL/BARRETT/KECCAKPERM/CBD2)
++    output logic                              pqc_result_req_o,
++    output vid_t                              pqc_result_id_o,
++    output vaddr_t                            pqc_result_addr_o,
++    output elen_t                             pqc_result_wdata_o,
++    output strb_t                             pqc_result_be_o,
++    input  logic                              pqc_result_gnt_i,
+     // Interface with the Slide Unit
+     input  elen_t                             sldu_operand_i,
+     output logic                              sldu_alu_req_valid_o,
+@@ -207,4 +219,41 @@ module vector_fus_stage import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg
+     .mask_ready_o         (mfpu_mask_ready                 )
+   );
+ 
++  //////////////////////////////
++  //  Vector PQC (Kyber) VFU  //
++  //////////////////////////////
++  // Post-quantum-crypto functional unit (VPQC_MONTMUL/BARRETT/KECCAKPERM/
++  // CBD2). Unlike ALU/MFPU it has no Slide Unit or Mask Unit connection:
++  // VPQC_MONTMUL/BARRETT are elementwise but masking/reduction were not
++  // part of the reference module's scope (see ARA_INTEGRATION.md), and
++  // VPQC_KECCAKPERM/CBD2 are whole-vector-register gather/scatter ops
++  // that do not participate in per-element masked reductions either.
++
++  vfu_pqc #(
++    .NrLanes        (NrLanes        ),
++    .VLEN           (VLEN           ),
++    .vaddr_t        (vaddr_t        ),
++    .vfu_operation_t(vfu_operation_t)
++  ) i_vfu_pqc (
++    .clk_i                (clk_i                 ),
++    .rst_ni               (rst_ni                ),
++    .lane_id_i            (lane_id_i             ),
++    // Interface with the lane sequencer
++    .vfu_operation_i      (vfu_operation_i       ),
++    .vfu_operation_valid_i(vfu_operation_valid_i ),
++    .pqc_ready_o          (pqc_ready_o           ),
++    .pqc_vinsn_done_o     (pqc_vinsn_done_o      ),
++    // Interface with the operand queues
++    .pqc_operand_i        (pqc_operand_i         ),
++    .pqc_operand_valid_i  (pqc_operand_valid_i   ),
++    .pqc_operand_ready_o  (pqc_operand_ready_o   ),
++    // Interface with the vector register file
++    .pqc_result_req_o     (pqc_result_req_o      ),
++    .pqc_result_id_o      (pqc_result_id_o       ),
++    .pqc_result_addr_o    (pqc_result_addr_o     ),
++    .pqc_result_wdata_o   (pqc_result_wdata_o    ),
++    .pqc_result_be_o      (pqc_result_be_o       ),
++    .pqc_result_gnt_i     (pqc_result_gnt_i      )
++  );
++
+ endmodule : vector_fus_stage

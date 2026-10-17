@@ -65,6 +65,13 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
     input  strb_t                                      masku_result_be_i,
     output logic                                       masku_result_gnt_o,
     output logic                                       masku_result_final_gnt_o,
+    // Post-quantum-crypto VFU
+    input  logic                                       pqc_result_req_i,
+    input  vid_t                                       pqc_result_id_i,
+    input  vaddr_t                                     pqc_result_addr_i,
+    input  elen_t                                      pqc_result_wdata_i,
+    input  strb_t                                      pqc_result_be_i,
+    output logic                                       pqc_result_gnt_o,
     // Slide unit
     input  logic                                       sldu_result_req_i,
     input  vid_t                                       sldu_result_id_i,
@@ -192,6 +199,7 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
     vinsn_result_written_d[masku_result_id] |= masku_result_gnt;
     vinsn_result_written_d[ldu_result_id] |= ldu_result_gnt;
     vinsn_result_written_d[sldu_result_id] |= sldu_result_gnt;
+    vinsn_result_written_d[pqc_result_id_i] |= pqc_result_gnt_o;
   end
 
   always_ff @(posedge clk_i or negedge rst_ni) begin: p_vinsn_result_written_ff
@@ -217,8 +225,9 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
 
   // A set bit indicates that the the master q is requesting access to the bank b
   // Masters 0 to NrOperandQueues-1 correspond to the operand queues.
-  // The remaining four masters correspond to the ALU, the MFPU, the MASKU, the VLDU, and the SLDU.
-  localparam NrGlobalMasters = 5;
+  // The remaining masters correspond to the ALU, the MFPU, the MASKU, the VLDU, the SLDU, and
+  // the PQC VFU.
+  localparam NrGlobalMasters = 6;
   localparam NrMasters = NrOperandQueues + NrGlobalMasters;
 
   typedef struct packed {
@@ -501,6 +510,15 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
       ext_operand_req[bank][VFU_MaskUnit]  = 1'b0;
       ext_operand_req[bank][VFU_SlideUnit] = 1'b0;
       ext_operand_req[bank][VFU_LoadUnit]  = 1'b0;
+      // VFU_Pqc's result-write request bit must be cleared here every
+      // cycle, like the other VFUs above, before it is freshly set below
+      // for the bank that pqc_result_addr_i currently targets. Without this
+      // default-clear the bit latches high for every bank the unit has ever
+      // written, which corrupts multi-word SCATTER ops: VPQC_KECCAKPERM /
+      // CBD2 / POLYMUL write 25-64 consecutive words cycling through all 8
+      // banks, and each stale bank would keep its write-enable asserted and
+      // be overwritten by whatever word is in flight.
+      ext_operand_req[bank][VFU_Pqc]       = 1'b0;
     end
 
     // Generate the payloads for write back operations
@@ -544,6 +562,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
       opqueue: AluA,
       default: '0
     };
+    operand_payload[NrOperandQueues + VFU_Pqc] = '{
+      addr   : pqc_result_addr_i >> $clog2(NrBanks),
+      wen    : 1'b1,
+      wdata  : pqc_result_wdata_i,
+      be     : pqc_result_be_i,
+      opqueue: AluA,
+      default: '0
+    };
 
     // Store their request value
     ext_operand_req[alu_result_addr_i[idx_width(NrBanks)-1:0]][VFU_Alu] =
@@ -556,6 +582,8 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
     sldu_result_req;
     ext_operand_req[ldu_result_addr[idx_width(NrBanks)-1:0]][VFU_LoadUnit] =
     ldu_result_req;
+    ext_operand_req[pqc_result_addr_i[idx_width(NrBanks)-1:0]][VFU_Pqc] =
+    pqc_result_req_i;
 
     // Generate the grant signals
     alu_result_gnt_o  = 1'b0;
@@ -563,12 +591,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
     masku_result_gnt  = 1'b0;
     sldu_result_gnt   = 1'b0;
     ldu_result_gnt    = 1'b0;
+    pqc_result_gnt_o  = 1'b0;
     for (int bank = 0; bank < NrBanks; bank++) begin
       alu_result_gnt_o  = alu_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_Alu];
       mfpu_result_gnt_o = mfpu_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_MFpu];
       masku_result_gnt  = masku_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_MaskUnit];
       sldu_result_gnt   = sldu_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_SlideUnit];
       ldu_result_gnt    = ldu_result_gnt | operand_gnt[bank][NrOperandQueues + VFU_LoadUnit];
+      pqc_result_gnt_o  = pqc_result_gnt_o | operand_gnt[bank][NrOperandQueues + VFU_Pqc];
     end
   end
 
@@ -600,11 +630,16 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
     );
 
     // Low-priority requests
+    // The PQC VFU's PqcA/PqcB opqueues and its VRF result-write port are not contiguous
+    // with the other low-priority ranges in the opqueue_e/vfu_e enums (they were appended
+    // at the end of each enum, see ARA_INTEGRATION.md), so they are concatenated as two
+    // extra low-priority arbiter inputs rather than folded into the existing bit-slices.
     payload_t payload_lp;
     logic payload_lp_req;
     logic payload_lp_gnt;
     rr_arb_tree #(
-      .NumIn(unsigned'(SlideAddrGenA)- unsigned'(MaskB) + 1 + unsigned'(VFU_LoadUnit) - unsigned'(VFU_SlideUnit) + 1),
+      .NumIn(unsigned'(SlideAddrGenA)- unsigned'(MaskB) + 1 + unsigned'(VFU_LoadUnit) - unsigned'(VFU_SlideUnit) + 1
+             + unsigned'(PqcB) - unsigned'(PqcA) + 1 + 1),
       .DataWidth($bits(payload_t)                                                               ),
       .AxiVldRdy(1'b0                                                                           )
     ) i_lp_vrf_arbiter (
@@ -613,11 +648,14 @@ module operand_requester import ara_pkg::*; import rvv_pkg::*; #(
       .flush_i(1'b0  ),
       .rr_i   ('0    ),
       .data_i ({operand_payload[SlideAddrGenA:MaskB],
-          operand_payload[NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit]} ),
+          operand_payload[NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit],
+          operand_payload[PqcB:PqcA], operand_payload[NrOperandQueues + VFU_Pqc]} ),
       .req_i ({lane_operand_req[bank][SlideAddrGenA:MaskB],
-          ext_operand_req[bank][VFU_LoadUnit:VFU_SlideUnit]}),
+          ext_operand_req[bank][VFU_LoadUnit:VFU_SlideUnit],
+          lane_operand_req[bank][PqcB:PqcA], ext_operand_req[bank][VFU_Pqc]}),
       .gnt_o ({operand_gnt[bank][SlideAddrGenA:MaskB],
-          operand_gnt[bank][NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit]}),
+          operand_gnt[bank][NrOperandQueues + VFU_LoadUnit:NrOperandQueues + VFU_SlideUnit],
+          operand_gnt[bank][PqcB:PqcA], operand_gnt[bank][NrOperandQueues + VFU_Pqc]}),
       .data_o (payload_lp    ),
       .idx_o  (/* Unused */  ),
       .req_o  (payload_lp_req),

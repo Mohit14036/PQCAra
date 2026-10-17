@@ -39,6 +39,7 @@ module ara_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::i
     input  pe_resp_t            [NrPEs-1:0] pe_resp_i,
     input  logic                            alu_vinsn_done_i,
     input  logic                            mfpu_vinsn_done_i,
+    input  logic                            pqc_vinsn_done_i,
     // Interface with the operand requesters
     output logic [NrVInsn-1:0][NrVInsn-1:0] global_hazard_table_o,
     // Only the slide unit can answer with a scalar response
@@ -246,6 +247,7 @@ module ara_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::i
       [VSE:VSXE]           : vfu = VFU_StoreUnit;
       [VSLIDEUP:VSLIDEDOWN]: vfu = VFU_SlideUnit;
       [VMVXS:VFMVFS]       : vfu = VFU_None;
+      [VPQC_MONTMUL:VPQC_CMOV]: vfu = VFU_Pqc;
       default              : vfu = VFU_None;
     endcase
   endfunction : vfu
@@ -297,9 +299,12 @@ module ara_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::i
     no_src_vrf = ((pe_req.op == VLE || pe_req.op == VLSE) && pe_req.vm);
   endfunction
 
+  // Positional, indexed by vfu_e: VFU_Alu, VFU_MFpu, VFU_Pqc, VFU_SlideUnit,
+  // VFU_MaskUnit, VFU_LoadUnit, VFU_StoreUnit, VFU_None.
   localparam int unsigned InsnQueueDepth [NrVFUs] = '{
     ValuInsnQueueDepth,
     MfpuInsnQueueDepth,
+    PqcInsnQueueDepth,
     SlduInsnQueueDepth,
     MaskuInsnQueueDepth,
     VlduInsnQueueDepth,
@@ -639,6 +644,16 @@ module ara_sequencer import ara_pkg::*; import rvv_pkg::*; import cf_math_pkg::i
   // ALU and MFPU has different signal sources
   assign insn_queue_done[VFU_Alu]       = alu_vinsn_done_i;
   assign insn_queue_done[VFU_MFpu]      = mfpu_vinsn_done_i;
+  // Without this, insn_queue_cnt_up[VFU_Pqc] (driven generically for
+  // every VFU by accepted_insn & target_vfus_vec[VFU_Pqc], see below)
+  // would never be matched by a corresponding down-count: a PQC
+  // instruction would be counted as issued but never as done, and
+  // vinsn_queue_ready[VFU_Pqc] would permanently deassert once
+  // MaxVInsnQueueDepth PQC instructions had been issued, blocking all
+  // further VPQC_* issue forever. This was a real, previously-unwired
+  // gap -- VFU_Pqc was added to vfu_e (NrVFUs 7->8) without a
+  // corresponding insn_queue_done[VFU_Pqc] assignment anywhere.
+  assign insn_queue_done[VFU_Pqc]       = pqc_vinsn_done_i;
   assign insn_queue_done[VFU_LoadUnit]  = |pe_resp_i[NrLanes+OffsetLoad].vinsn_done;
   assign insn_queue_done[VFU_StoreUnit] = |pe_resp_i[NrLanes+OffsetStore].vinsn_done;
   assign insn_queue_done[VFU_MaskUnit]  = |pe_resp_i[NrLanes+OffsetMask].vinsn_done;
