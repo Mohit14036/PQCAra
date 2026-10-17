@@ -1,0 +1,39 @@
+name: pqc-ci
+
+# Lightweight CI for the Kyber / ML-KEM-768 vector extension: runs the
+# self-contained Icarus Verilog test suites (no multi-hour toolchain builds).
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pqc-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: Primitive block tests
+        run: bash kyber_kem_hardware/kyber_package/scripts/run_legacy_block_tests.sh
+
+      - name: KEM top-level tests (keygen / encaps / decaps / fullloop)
+        run: bash kyber_kem_hardware/kyber_package/scripts/run_kem_top_tests.sh
+
+      - name: NIST KAT 100 vectors (standalone RTL)
+        run: |
+          cd kyber_kem_hardware/kyber_package
+          iverilog -g2012 -o /tmp/fullloop.vvp verilog/*.v testbench/tb_kem_fullloop.sv
+          fail=0
+          for v in vectors/vecs_kemtop_nist/kat_vec_*.txt; do
+            r=$(vvp /tmp/fullloop.vvp +vec="$v" | grep RESULT | head -1)
+            case "$r" in
+              *PASS*) ;;
+              *) echo "FAIL $(basename "$v"): $r"; fail=1 ;;
+            esac
+          done
+          if [ "$fail" -eq 0 ]; then echo "All 100 NIST KAT vectors PASS"; fi
+          exit $fail

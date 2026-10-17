@@ -1,6 +1,6 @@
 # Ara
 
-[![ci](https://github.com/pulp-platform/ara/actions/workflows/ci.yml/badge.svg)](https://github.com/pulp-platform/ara/actions/workflows/ci.yml)
+[![pqc-ci](https://github.com/Mohit14036/PQCAra/actions/workflows/pqc-ci.yml/badge.svg)](https://github.com/Mohit14036/PQCAra/actions/workflows/pqc-ci.yml)
 
 Ara is a vector unit working as a coprocessor for the CVA6 core.
 It supports the RISC-V Vector Extension, [version 1.0](https://github.com/riscv/riscv-v-spec/releases/tag/v1.0).
